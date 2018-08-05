@@ -1,0 +1,164 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Luis Carlos Wruck"
+date: "5 de agosto de 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+This is the design required for the completion of the Machine Learning Practical Course. This report is divided into the following parts:
+1) Preparation of the environment and installation of the necessary packages
+2) Download and clean the data to avoid the use of missing variables (NA). The training base was divided in two (70/30) for the creation of the model and its respective test and measurement of accuracy.
+3) A first model using classification tree is created, but the precision is not enough.
+4) A final model is created using random forest that calculates 99% accuracy, which is required to obtain 95% confidence to test 20 cases. In order to improve performance, the model was trained using a k-fold = 5 and a ntree = 300.
+5) With 99% precision obtained by the model, we predict the 20 cases with 95% confidence required.
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Loading required packages
+```{r}
+library(rmarkdown)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(rattle)
+```
+
+
+# Downloading data
+
+Downloading the data from the source
+
+```{r}
+pml.training.url <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+pml.testing.url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+pml.training <- "./dados/pml-training.csv"
+pml.testing  <- "./dados/pml-testing.csv"
+if (!file.exists("./dados")) {
+  dir.create("./dados")
+}
+if (!file.exists(pml.training)) {
+  download.file(pml.training.url, destfile=pml.training)
+}
+if (!file.exists(pml.testing)) {
+  download.file(pml.testing.url, destfile=pml.testing)
+}
+```
+
+## Reading the Data
+
+After downloading the data, we need to read them in two data frames
+
+```{r}
+pml.training <- read.csv("./dados/pml-training.csv",  na.strings = c("NA", "#DIV/0!", ""), header = TRUE)
+pml.testing <- read.csv("./dados/pml-testing.csv",  na.strings = c("NA", "#DIV/0!", ""), header = TRUE)
+
+dim(pml.training)
+dim(pml.testing)
+```
+
+## Cleaning Data
+
+We need to clear the data, excluding observations with missing values and some variables that do not make sense for this study.
+
+```{r}
+pml.training.tp<- pml.training[,colSums(is.na(pml.training)) == 0]
+dim(pml.training.tp)
+pml.testing.tp<- pml.testing[,colSums(is.na(pml.testing)) == 0]
+
+training<- pml.training.tp[,-c(1:7)]
+testing<- pml.testing.tp[,-c(1:7)]
+
+dim(training)
+dim(testing)
+```
+
+##Correlation Matrix Visualization
+
+We will verify how the variables of the training base are correlated
+
+```{r}
+corrPlot <- cor(training[, -length(names(training))])
+corrplot(corrPlot, method="color",tl.cex = .7)
+```
+
+## Data Partition
+
+Once the data is clear, we will divide the training base into two, training (70%) and validation (30%). We will use the validation base to cross-validate the next steps.
+
+```{r}
+set.seed(1542)
+inTrain <- createDataPartition(training$classe, p=0.70, list=F)
+train.partition <- training[inTrain, ]
+test.partition <- training[-inTrain, ]
+```
+
+## Predictive Model using classification trees
+
+Let's build a first model using the training data.
+
+```{r}
+train.partition.ct <- train(classe~., data=train.partition, method="rpart")
+fancyRpartPlot(train.partition.ct$finalModel)
+```
+
+We predict the values using the test basis and then we calculate the confusion matrix with the results of the accuracy
+
+```{r}
+test.validation.ct<- predict(train.partition.ct, newdata = test.partition)
+confusionMatrix(test.validation.ct, test.partition$classe)
+```
+
+As we obtained a low accuracy (50%), with an IC of (49% -51%), we need to improve the performance of the model.
+
+## Predictive Model using Random Forest
+
+We fit a predictive model using Random Forest algorithm because it automatically selects important variables and is robust to correlated covariates & outliers in general, improving our model. We will use 5-fold cross validation when applying the algorithm.
+
+```{r}
+controlrf <- trainControl(method="cv", 5)
+train.partition.rf <- train(classe ~ ., data=train.partition, method="rf", trControl=controlrf, ntree=300)
+train.partition.rf
+```
+
+We will estimate the performance of the model using the validation base
+
+```{r}
+test.validation.rf <- predict(train.partition.rf, newdata = test.partition)
+confusionMatrix(test.validation.rf, test.partition$classe)
+
+# estimating accuracy and the estimated out-of-sample error
+accuracy <- postResample(test.validation.rf, test.partition$classe)
+accuracy
+
+out.of.sample.error <- 1 - as.numeric(confusionMatrix(test.partition$classe, test.validation.rf)$overall[1])
+out.of.sample.error
+```
+The result of accuracy is 99%, which allows us to safely predict the 20 values.
+
+This is the plot of the model error rate by number of trees and 20 most important variables
+
+```{r}
+plot(train.partition.rf$finalModel,main="Random forest model error rate by number of trees")
+varImp(train.partition.rf)
+```
+
+## Predicting for Test Data Set
+
+Once we have our random forest model performing, we can use it to predict how people will exercise. The final results were saved in a archive.
+
+```{r}
+predict_test<- predict(train.partition.rf, testing)
+predict_test
+
+write.csv(predict_test,"./dados/result.csv")
+```
